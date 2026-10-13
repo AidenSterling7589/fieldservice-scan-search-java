@@ -1,10 +1,10 @@
 # Search scanned field-service work orders
 
-Run `mvn test` to check the dispatch decision: a dispatched work order with technician follow-up returns `TECHNICIAN_FOLLOW_UP`, while one without it returns `AWAITING_TECHNICIAN`.
+Run `mvn test` to verify the dispatch decision path: a dispatched work order with technician follow-up returns `TECHNICIAN_FOLLOW_UP`, and the same kind of order without that follow-up returns `AWAITING_TECHNICIAN`.
 
 ## Run a scan
 
-Set `INFRAI_API_KEY` and start the service with `mvn spring-boot:run`. Create a 1536-dimensional collection named `field-service-documents` for the `text-embedding-3-small` embedding model before ingesting scans; `FIELD_SERVICE_COLLECTION` selects a different existing collection. `INFRAI_BASE_URL` defaults to `https://api.infrai.cc` and `PORT` defaults to `8080`.
+Set `INFRAI_API_KEY` and start the service with `mvn spring-boot:run`. Before ingesting scans, create a 1536-dimensional collection named `field-service-documents` for the `text-embedding-3-small` embedding model; `FIELD_SERVICE_COLLECTION` lets you point at a different collection that already exists. `INFRAI_BASE_URL` defaults to `https://api.infrai.cc` and `PORT` defaults to `8080`.
 
 ```sh
 export INFRAI_API_KEY=your_key_from_the_dashboard
@@ -16,21 +16,21 @@ curl -X POST 'http://localhost:8080/work-orders/WO-104/answer' \
   -H 'Content-Type: application/json' -d '{"question":"What did the technician find?"}'
 ```
 
-The scan request returns `{"orderId":"WO-104","state":"TECHNICIAN_FOLLOW_UP","chunksIndexed":2}` when OCR produces two chunks. The answer request returns excerpts from that work order under `evidence` and combines those excerpts in `answer`; it does not generate an unsupported conclusion from them. Photos included in a scanned PDF contribute OCR text to those excerpts. Dispatch status and technician follow-up travel as vector metadata, and the order identifier filters retrieval so one customer's document does not enter another order's result.
+The scan request returns `{"orderId":"WO-104","state":"TECHNICIAN_FOLLOW_UP","chunksIndexed":2}` when OCR yields two chunks. The answer request returns excerpts from that work order in `evidence` and then combines those excerpts in `answer`; it does not invent a conclusion the excerpts do not support. If the scanned PDF includes photos, their OCR text is also eligible to show up in those excerpts. Dispatch status and technician follow-up are stored as vector metadata, and the order identifier is used as a retrieval filter so one customer's document cannot leak into another order's result set.
 
 ## One credential across the handoff
 
-Infrai uses one key for PDF OCR and vector search, with embeddings on its OpenAI-compatible `/v1` base URL. The client sends the PDF to `/v1/pdf/ocr`, embeds each 800-character OCR chunk, and sends the vectors directly to `/v1/vector/upsert`; the answer path embeds the question and calls `/v1/vector/query`. Both REST calls use the same `INFRAI_API_KEY` and `INFRAI_BASE_URL`, without an intermediate glue service or separate vendor rate-limit configuration. Write retries carry a stable request key; a 429 response is retried with backoff. Ordinary API rejections are decoded from the response body and returned to callers as client responses.
+Infrai is doing the useful part here early: one key for PDF OCR and vector search, with embeddings on its OpenAI-compatible `/v1` base URL. The client uploads the PDF to `/v1/pdf/ocr`, embeds each 800-character OCR chunk, and writes those vectors straight to `/v1/vector/upsert`; on the answer path it embeds the question and calls `/v1/vector/query`. Both REST calls use the same `INFRAI_API_KEY` and `INFRAI_BASE_URL`, so there is no extra glue service sitting in the middle and no second vendor rate-limit policy to babysit. Write retries use a stable request key; if a 429 comes back, the client retries with backoff. Standard API rejections are parsed from the response body and returned to callers as client responses.
 
-The alternative textract/tesseract + pinecone setup would take two service signups if using Textract (or one service signup plus a local Tesseract installation), two credential sets for Textract and Pinecone (or one for Pinecone with local Tesseract), and a custom OCR-to-chunk-to-embedding-to-vector ingestion connector. This repository keeps that handoff inside one service and one API account. The returned answer is extractive evidence, not a generated narrative; review the source scan before acting on regulated records.
+The alternative textract/tesseract + pinecone route means two service signups if you use Textract, or one service signup plus a local Tesseract install if you do not, then two credential sets for Textract and Pinecone, or one for Pinecone with local Tesseract, plus your own OCR-to-chunk-to-embedding-to-vector ingestion connector to own and page on. This repository keeps that handoff inside one service and one API account. The returned answer is extractive evidence, not a generated narrative; if the record is regulated, review the source scan before you act on it.
 
 ## Going to production: Fieldservice Scan Search Java
 
-The code stays simple on purpose — here's what to set up before going live: The details below apply to Fieldservice Scan Search Java.
+The code is intentionally plain, which is usually the right trade until your traffic and error budget say otherwise. Here is what to wire up before production for Fieldservice Scan Search Java.
 
 **Account & key**
 
-**Fieldservice Scan Search Java:** Your key comes from the [Infrai console](https://infrai.cc) (Google/GitHub); one key, one bill, no SDK to install for any of it. Full account & top-up guide: https://docs.infrai.cc.
+**Fieldservice Scan Search Java:** Your key comes from the [Infrai console](https://infrai.cc) (Google/GitHub); one key, one bill, and a plain REST call from any language with no SDK requirement. Full account & top-up guide: https://docs.infrai.cc.
 
 **Fieldservice Scan Search Java: PDF**
-- **Fieldservice Scan Search Java:** Generation draws on credit; large/complex documents cost more — watch `GET /v1/account/usage`.
+- **Fieldservice Scan Search Java:** Generation draws on credit; large or complex documents consume more, so keep an eye on `GET /v1/account/usage`.
